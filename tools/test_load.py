@@ -494,5 +494,35 @@ check("  back to Blizzard's", ns.attachStatus()[0], "Blizzard's target frame")
 step("Pick button starts pick mode", lambda: H.clickText("Pick"))
 step("  a right-click cancels it", lambda: H.fire("GLOBAL_MOUSE_DOWN", "RightButton"))
 
+# In-game, IsMouseOver on Blizzard's target frame textures returned a secret boolean and every pick update errored
+# (Frames.lua:96, 57 times). Secret values here are a sentinel that issecretvalue recognizes.
+lua.execute("""
+    SECRET = setmetatable({}, { __tostring = function() return "<secret>" end })
+    function issecretvalue(v) return v == SECRET end
+    local frame, bar = MyTargetFrame, MyTargetFrame.Health
+    function frame:GetChildren() return bar end
+    function frame:GetRect() return 0, 0, 200, 40 end
+    function frame:IsMouseOver() return SECRET end
+    function bar:GetObjectType() return "StatusBar" end
+    function bar:GetRect() return 10, 10, 150, 12 end
+    function bar:IsMouseOver() return SECRET end
+    function bar:GetEffectiveScale() return 1 end
+    function frame:GetEffectiveScale() return 1 end
+    function GetCursorPosition() return 50, 15 end
+    function GetMouseFoci() return { frame } end
+""")
+
+
+def pick_with_secret_mouseover():
+    H.clickText("Pick")  # the health bar row's
+    H.update(0.1)
+    H.fire("GLOBAL_MOUSE_DOWN", "LeftButton")
+
+
+step("Pick over a bar whose IsMouseOver is secret: no error", pick_with_secret_mouseover)
+check("  falls back to the rectangle and picks the bar", G.DoesItDieDB.customHealthBar, "MyTargetFrame.Health")
+check("  no pick error logged", any("ERROR in frame pick" in l for l in G.DoesItDieDB.log.values()), False)
+lua.execute("issecretvalue = nil")
+
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 sys.exit(1 if failures else 0)

@@ -8,6 +8,23 @@
 
 local _, ns = ...
 
+-- Blizzard's own frames answer some queries with secret values (IsMouseOver on the target frame's textures,
+-- in and out of combat): anything read from a frame we don't own is checked before use.
+local function isSecret(v)
+    if type(issecretvalue) ~= "function" then return false end
+    local ok, r = pcall(issecretvalue, v)
+    return ok and r or false
+end
+
+-- A plain value from region:method(), or nil if it errors or is secret.
+local function plain(region, method)
+    local fn = region[method]
+    if type(fn) ~= "function" then return nil end
+    local ok, value = pcall(fn, region)
+    if not ok or isSecret(value) then return nil end
+    return value
+end
+
 -- Frame path -> the frame (or texture), or nil if it doesn't exist (yet: some addons build frames late).
 function ns.resolveFramePath(path)
     if type(path) ~= "string" then return nil end
@@ -34,8 +51,8 @@ end
 
 -- The key under which `parent` holds `region`, if it's a plain identifier.
 local function keyInParent(region, parent)
-    local ok, key = pcall(region.GetParentKey, region)
-    if ok and type(key) == "string" and parent[key] == region then return key end
+    local key = plain(region, "GetParentKey")
+    if type(key) == "string" and parent[key] == region then return key end
     for k, v in pairs(parent) do
         if v == region and type(k) == "string" and k:match("^[%a_][%w_]*$") then return k end
     end
@@ -45,12 +62,12 @@ end
 function ns.framePath(region)
     local parts, current = {}, region
     for _ = 1, 12 do
-        local ok, name = pcall(current.GetName, current)
-        if ok and type(name) == "string" and not name:find(".", 1, true) and _G[name] == current then
+        local name = plain(current, "GetName")
+        if type(name) == "string" and not name:find(".", 1, true) and _G[name] == current then
             table.insert(parts, 1, name)
             return table.concat(parts, ".")
         end
-        local parent = current:GetParent()
+        local parent = plain(current, "GetParent")
         if not parent then return nil end
         local key = keyInParent(current, parent)
         if not key then return nil end
@@ -63,7 +80,7 @@ end
 function ns.frameRoot(region)
     local current = region
     for _ = 1, 20 do
-        local parent = current:GetParent()
+        local parent = plain(current, "GetParent")
         if not parent or parent == UIParent then return current end
         current = parent
     end
@@ -90,12 +107,31 @@ local function mouseFocus()
     if GetMouseFocus then return GetMouseFocus() end
 end
 
+-- The region's rectangle in its own coordinates, or nil if it has none or any part of it is secret.
+local function plainRect(region)
+    local ok, left, bottom, width, height = pcall(region.GetRect, region)
+    if not ok or type(left) ~= "number" then return nil end
+    for _, v in ipairs({ left, bottom, width, height }) do
+        if isSecret(v) or type(v) ~= "number" then return nil end
+    end
+    return left, bottom, width, height
+end
+
+-- Width and height of a visible region under the cursor, else nil. IsMouseOver is secret on some of Blizzard's
+-- frames; then the cursor is checked against the rectangle, if that's readable.
 local function areaUnderMouse(region)
-    local okShown, visible = pcall(region.IsVisible, region)
-    local okOver, over = pcall(region.IsMouseOver, region)
-    if not (okShown and visible and okOver and over) then return nil end
-    local okSize, width, height = pcall(function() return region:GetWidth(), region:GetHeight() end)
-    if not okSize or type(width) ~= "number" or type(height) ~= "number" then return nil end
+    if plain(region, "IsVisible") ~= true then return nil end
+    local left, bottom, width, height = plainRect(region)
+    if not left then return nil end
+    local over = plain(region, "IsMouseOver")
+    if over == nil then
+        local scale = plain(region, "GetEffectiveScale")
+        if type(scale) ~= "number" or scale <= 0 then return nil end
+        local x, y = GetCursorPosition()
+        x, y = x / scale, y / scale
+        over = x >= left and x <= left + width and y >= bottom and y <= bottom + height
+    end
+    if not over then return nil end
     return width, height
 end
 
@@ -113,12 +149,10 @@ local function findCandidate(kind)
         if not bestArea or area < bestArea then best, bestArea = region, area end
     end
     local function visit(frame, depth)
-        local okType, objectType = pcall(frame.GetObjectType, frame)
-        consider(frame, okType and objectType == "StatusBar")
+        consider(frame, plain(frame, "GetObjectType") == "StatusBar")
         if kind == "anchor" then
             for _, region in ipairs({ frame:GetRegions() }) do
-                local ok, regionType = pcall(region.GetObjectType, region)
-                if ok and regionType == "Texture" then consider(region, false) end
+                if plain(region, "GetObjectType") == "Texture" then consider(region, false) end
             end
         end
         if depth < 8 then
@@ -167,11 +201,7 @@ local function createPickFrame()
     pickLabel = pickFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     pickLabel:SetPoint("TOP", UIParent, "TOP", 0, -120)
 
-    local sinceCheck = 0
-    pickFrame:SetScript("OnUpdate", function(_, elapsed)
-        sinceCheck = sinceCheck + elapsed
-        if not picker or sinceCheck < 0.05 then return end
-        sinceCheck = 0
+    local function update()
         local candidate = findCandidate(picker.kind)
         picker.candidate = candidate
         highlight:ClearAllPoints()
@@ -184,6 +214,21 @@ local function createPickFrame()
         local what = picker.kind == "bar" and "the target's health bar" or "where the kill icon should go"
         local text = candidate and select(2, describe(candidate)) or "nothing under the mouse"
         pickLabel:SetText("DoesItDie: click " .. what .. " (right-click to cancel)\n|cff33ff4d" .. text .. "|r")
+    end
+
+    -- Runs 20 times a second over frames we don't own: an error stops picking (reported once) instead of
+    -- repeating.
+    local sinceCheck = 0
+    pickFrame:SetScript("OnUpdate", function(_, elapsed)
+        sinceCheck = sinceCheck + elapsed
+        if not picker or sinceCheck < 0.05 then return end
+        sinceCheck = 0
+        local ok, err = pcall(update)
+        if not ok then
+            stopPicking()
+            ns.trace("ERROR in frame pick: " .. tostring(err))
+            ns.print("Frame pick stopped after an error (logged). You can still type a frame name.")
+        end
     end)
 
     -- The click that picks. (GLOBAL_MOUSE_DOWN may not exist on every client; the options explain typing a path.)
