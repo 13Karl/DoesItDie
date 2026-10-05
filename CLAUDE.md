@@ -50,6 +50,7 @@ Consequences for the design:
 | Path | What |
 |---|---|
 | `DoesItDie/DoesItDie.lua` | The addon, in sections: constants and tables, helpers, description parsing, DoT tracking (combo points, cast outcomes, tick matching), display, settings and what `Options.lua` needs (`ns.*`), events, slash commands |
+| `DoesItDie/Locales/` | Spell language, loaded before `DoesItDie.lua`: one file per language adding an entry to `ns.locales` (`enUS.lua` documents the fields; `esES.lua`): how to read descriptions (DoTs, finishers, combo points, what isn't a DoT) and translated spell names for the name-keyed tables. `Locales.lua` (`ns.locale`) picks one (option in Advanced, or the client's language). English stays in `DoesItDie.lua`, which asks `ns.locale` first and falls back to its own parsing (also for Forever text still in English). Only spell reading is localized, not the UI |
 | `DoesItDie/Options.lua` | The options window: live preview with a mock target frame, tabs, presets, hand-built controls; plus a small page in Options > AddOns that opens it. Shares data with `DoesItDie.lua` through the addon namespace (`local _, ns = ...`) |
 | `DoesItDie/Frames.lua` | Custom target frame (options' Advanced tab): attach the marker and kill icon to another addon's target frame instead of Blizzard's (which unit frame replacements hide). Settings hold frame paths (`GlobalName.key.key`); a Pick mode highlights and takes the frame under the mouse. The marker only needs the bar's rectangle, so the bar must fill left to right and be exactly the fill area. When the attached frame (custom or Blizzard's) isn't visible, the display hides. Unverified in-game |
 | `DoesItDie/Nameplates.lua` | The marker and a small kill icon on every enemy nameplate with your DoTs (per-plate widgets parented to Blizzard's recycled plate frames, fed via `ns.dotBreakdownForUnit`), with their own look settings (`plate*`, since enemy plates are red) and a mock plate in the options preview; plus the `/did plates` probe. Probe verified plates are reachable and anchorable in the open world, in and out of combat; dungeons are untested |
@@ -57,7 +58,8 @@ Consequences for the design:
 | `DoesItDie/Textures/` | Generated TGAs: patterns (dashes, stripes, spark, shine) and the sunglasses icon |
 | `tools/make_textures.py` | Regenerates the textures |
 | `tools/scrape_forever_spellbook.py` | Scrapes all nine class spellbooks from foreverchanges.pro into `tools/data/forever_spellbook.json` |
-| `tools/test_parse.py` | Runs the addon's real description parser (in Lua, via `lupa`) on hand-written tooltips |
+| `tools/test_parse.py` | Runs the addon's real description parser (in Lua, via `lupa`) on hand-written tooltips, in English and Spanish |
+| `tools/addon_lua.py` | Shared by the tests that run chunks of `DoesItDie.lua`: loads `Locales/` (from the .toc) into `ns` first |
 | `tools/test_spellbook.py` | Runs every scraped Forever damage tooltip through the parser and compares with a reviewed snapshot (`tools/data/spellbook_expected.json`) |
 | `tools/test_tracking.py` | Plays scripted fights through the real tracking code with game APIs stubbed: tick matching, dodges/misses, recasts, combo points, first-tick waiting. Includes replays of real in-game logs |
 | `tools/test_display.py` | Loads the real display code with mocked frames and checks the per-DoT segments (running totals, colors, dividers, text breakdown) |
@@ -66,7 +68,8 @@ Consequences for the design:
 
 ## How the tracking works (high level)
 
-1. **Cast** (`UNIT_SPELLCAST_SUCCEEDED`, player only): parse the description (`parseDot`). Skip ignored spells
+1. **Cast** (`UNIT_SPELLCAST_SUCCEEDED`, player only): parse the description (`parseDot`, with the chosen
+   locale's patterns, then English's). Skip ignored spells
    (AoE, channels, traps, delayed damage), heals and weapon poisons. Finishers (Rip, Rupture) read the
    per-combo-point table. The DoT goes on the mob that was targeted at `UNIT_SPELLCAST_SENT` (matched by cast
    GUID): players who tab-dot have often changed target by the time an instant's cast event arrives.
@@ -109,6 +112,8 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
     `"Interface\\Buttons\\WHITE8X8"`. Edit Lua with file tools, and grep `Interface` after scripted edits.
   - Guard every value that might be secret with `isSecret()` before comparing or indexing with it.
   - Bump `DB_VERSION` when learned tick data from older versions would be wrong.
+  - Spell names in `DoesItDie.lua`'s tables are English; a new entry there needs its translation in each
+    `Locales/` file's `names`, or it won't match on that client.
   - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` is around 186,
     so new features with many top-level locals belong in a new file (added to the .toc) sharing `ns`.
 
@@ -116,7 +121,8 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
 
 Verified in-game: Hunter (Serpent Sting, early version), low-level Warlock (Immolate, Corruption), Druid
 (Rip with counted combo points, Moonfire, misses). Every Forever damage tooltip for all classes goes through
-`test_spellbook.py`: 24 are tracked as DoTs, 13 deliberately ignored.
+`test_spellbook.py`: 24 are tracked as DoTs, 13 deliberately ignored. The Spanish locale is unverified in-game;
+its test cases are built around fragments of Wowhead Forever's Spanish tooltips.
 
 Known limitations:
 

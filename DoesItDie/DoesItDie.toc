@@ -6,6 +6,9 @@
 ## SavedVariables: DoesItDieDB
 ## X-Curse-Project-ID: 1709161
 
+Locales\enUS.lua
+Locales\esES.lua
+Locales\Locales.lua
 DoesItDie.lua
 Frames.lua
 Options.lua

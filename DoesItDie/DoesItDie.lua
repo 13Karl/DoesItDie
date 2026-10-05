@@ -70,6 +70,8 @@ local IGNORED_SPELLS = {
     ["Mind Flay"] = true, ["Arcane Missiles"] = true, ["Starshards"] = true,
     ["Immolation Trap"] = true, ["Explosive Trap"] = true, ["Wyvern Sting"] = true,
 }
+-- The names above are English; this adds each locale's translations (Locales/).
+ns.locale.addNames(PROJECTILE_DOTS, KNOWN_TICK_INTERVALS, TICK_SHAPES, SCHOOL_BY_NAME, IGNORED_SPELLS)
 
 local SCHOOL_MASKS = {
     Physical = 1, Holy = 2, Fire = 4, Nature = 8, Frost = 16, Shadow = 32, Arcane = 64,
@@ -121,6 +123,7 @@ local DEFAULTS = {
     customIconAnchor = "",
     -- Accuracy
     waitFirstTick = "off",
+    language = "auto", -- spell names and descriptions: "auto" (client language) or a Locales/ id
     -- Nameplates (Nameplates.lua): their own look, since enemy plates are red. Defaults read well on red.
     nameplateMode = "markerIcon",
     nameplateIconSize = 18,
@@ -249,6 +252,8 @@ end
 -- recognised by "Finishing move", not "combo point".)
 local function parseDot(desc, comboPoints)
     if type(desc) ~= "string" or isSecret(desc) then return nil end
+    local total, school, duration, interval = ns.locale.parseDot(desc, comboPoints) -- non-English client
+    if total then return total, school, duration, interval end
     if desc:find("Finishing move") then return parseFinisher(desc, comboPoints or 5) end
     -- Weapon enchants (rogue poisons) describe a proc DoT but aren't cast on the target. Match the enchant
     -- wording only: Lacerate's tooltip also mentions "weapon damage".
@@ -368,7 +373,8 @@ local function rememberComboPoints()
 end
 
 local function isFinisherDescription(desc)
-    return type(desc) == "string" and not isSecret(desc) and desc:find("Finishing move") ~= nil
+    return type(desc) == "string" and not isSecret(desc)
+        and (desc:find("Finishing move") ~= nil or ns.locale.isFinisher(desc))
 end
 
 local function onCastSent(spellID, castGUID)
@@ -502,7 +508,7 @@ local function onPlayerCast(spellID, castGUID)
     local ok, name, desc = pcall(spellNameAndDescription, spellID)
     if not ok or not name or isSecret(name) then return end
     if type(desc) == "string" and not isSecret(desc) then
-        local awarded = tonumber(desc:match("Awards (%d+) combo point"))
+        local awarded = tonumber(desc:match("Awards (%d+) combo point")) or ns.locale.awardedComboPoints(desc)
         if awarded then onBuilderCast(key, awarded) end
     end
     if IGNORED_SPELLS[name] then return end

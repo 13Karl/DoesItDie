@@ -636,6 +636,9 @@ local function buildTabs()
     plates.footer:Hide()
 
     local advanced = addTab("Advanced")
+    advanced:choice("language", "Spell language", ns.locale.list(), { tooltip = "The language your game client "
+        .. "shows spell names and tooltips in, so the addon recognizes your DoTs. Auto follows the client "
+        .. "(Español for a Spanish client). Idioma del cliente: elige Español (España) si tu juego está en español." })
     advanced:choice("waitFirstTick", "Wait for first tick", lists.waitModes, { tooltip = "Whether a new DoT "
         .. "counts before its first tick lands. \"When unsure\" waits for finishers with unknown combo points "
         .. "and spells the addon hasn't seen tick yet." })
